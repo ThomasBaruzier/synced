@@ -4,6 +4,8 @@ Minimal, privacy-first, real-time file sharing and chat platform built with Node
 
 ## Features
 
+![synced](https://github.com/user-attachments/assets/61e85c9c-5bd2-4884-943b-654ea82241a2)
+
 ### Communication
 - Real-time text messaging broadcast via WebSockets.
 - Dynamic user color assignment based on active session hues.
