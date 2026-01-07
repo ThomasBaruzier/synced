@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${HOST:-127.0.0.1}:${PORT:-3000}:3000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3000
+      - TRUST_PROXY=loopback,linklocal,uniquelocal
+    volumes:
+      - ./uploads:/app/uploads
+      - ./.env:/app/.env:ro

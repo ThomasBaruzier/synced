@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <title>Synced</title>
+  </head>
+  <body>
+    <div id="drop-overlay">
+      <div class="drop-content">
+        <div class="drop-icon-wrapper">
+          <i class="fas fa-arrow-up"></i>
+        </div>
+        <span>Drop files to share</span>
+      </div>
+    </div>
+
+    <div class="app-layout">
+      <section class="chat-pane">
+        <header class="chat-header">
+          <div class="header-left">
+            <div class="logo-container">
+              <button
+                id="reset-btn"
+                class="logo-btn"
+                aria-label="Reset Chat"
+                type="button"
+              >
+                <i class="fas fa-sync-alt logo-icon"></i>
+              </button>
+              <div class="reset-tooltip">Reset chat?</div>
+            </div>
+          </div>
+          <div class="header-center">
+            <h1>Synced</h1>
+          </div>
+          <div class="header-right">
+            <button
+              id="debug-btn"
+              class="debug-btn"
+              aria-label="Copy Logs"
+              title="Copy Console Logs"
+            >
+              <i class="fas fa-bug"></i>
+            </button>
+            <div class="online-badge" title="Users Connected">
+              <span id="user-count">0</span>
+              <i class="fas fa-user"></i>
+            </div>
+          </div>
+          <div id="loader-bar" class="loader-bar"></div>
+        </header>
+
+        <div id="message-list" class="message-list"></div>
+
+        <div class="input-area-container">
+          <div class="input-bar">
+            <input id="file-input" type="file" multiple hidden />
+
+            <div class="text-field-wrapper">
+              <textarea
+                id="input-text"
+                placeholder="Share anything..."
+                rows="1"
+                autofocus
+              ></textarea>
+            </div>
+
+            <button id="file-btn" class="icon-btn" aria-label="Add File">
+              <i class="fas fa-plus"></i>
+            </button>
+
+            <button id="send-btn" class="send-btn" aria-label="Send">
+              <i class="fas fa-arrow-up"></i>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <div id="drag-handle" class="resizer"></div>
+
+      <section id="preview-pane" class="preview-pane">
+        <header class="preview-header">
+          <h2>Preview</h2>
+          <div class="preview-actions">
+            <button
+              id="copy-content-btn"
+              class="action-btn"
+              disabled
+              data-tooltip="Copy Content"
+            >
+              <i class="far fa-copy"></i>
+            </button>
+            <button
+              id="copy-link-btn"
+              class="action-btn"
+              disabled
+              data-tooltip="Copy Link"
+            >
+              <i class="fas fa-link"></i>
+            </button>
+            <button
+              id="download-btn"
+              class="action-btn"
+              disabled
+              data-tooltip="Download"
+            >
+              <i class="fas fa-cloud-download-alt"></i>
+            </button>
+          </div>
+        </header>
+
+        <div class="preview-content" id="preview-stage">
+          <div class="empty-state">
+            <i class="fas fa-photo-video"></i>
+            <p>Select a file to view</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="modal-viewer" class="modal-viewer">
+      <div class="modal-overlay"></div>
+      <div class="modal-container">
+        <header class="modal-header">
+          <div class="modal-actions">
+            <button id="modal-copy-content-btn" aria-label="Copy Content">
+              <i class="far fa-copy"></i>
+            </button>
+            <button id="modal-copy-link-btn" aria-label="Copy Link">
+              <i class="fas fa-link"></i>
+            </button>
+            <button id="modal-download-btn" aria-label="Download">
+              <i class="fas fa-cloud-download-alt"></i>
+            </button>
+          </div>
+          <button
+            id="modal-close-btn"
+            class="modal-close-btn"
+            aria-label="Close"
+          >
+            <i class="fas fa-times"></i>
+          </button>
+        </header>
+        <div id="modal-content" class="modal-content"></div>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="main.js"></script>
+  </body>
+</html>
