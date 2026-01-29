@@ -1,5 +1,7 @@
 services:
   app:
+    image: synced
+    container_name: synced
     build: .
     restart: unless-stopped
     ports:
