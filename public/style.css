@@ -406,6 +406,33 @@ header {
   margin-top: 5px;
 }
 
+.bubble-actions {
+  display: flex;
+  margin-top: 4px;
+}
+
+.me .bubble-actions {
+  justify-content: flex-end;
+}
+
+.them .bubble-actions {
+  justify-content: flex-start;
+}
+
+.bubble-copy-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-height: 24px;
+  padding: 4px 8px;
+  transition: color 0.2s;
+}
+
+.bubble-copy-btn:hover {
+  color: var(--text-primary);
+}
+
 .me .bubble {
   transform-origin: bottom right;
 }
