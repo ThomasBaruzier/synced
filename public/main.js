@@ -1679,6 +1679,35 @@ const MessageRenderer = {
       t.className = 'bubble-text';
       t.appendChild(Utils.linkify(msg.content));
       b.appendChild(t);
+
+      // SPEC_ADDITION: Persistent Chat Message Copy Button
+      const actions = document.createElement('div');
+      actions.className = 'bubble-actions';
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'bubble-copy-btn';
+      copyBtn.innerHTML = '<i class="far fa-copy"></i>';
+      
+      copyBtn.onclick = async () => {
+        if (!navigator.clipboard) {
+          console.error('Clipboard API not available');
+          Toast.show('Failed to copy', 'error');
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(msg.content);
+          copyBtn.innerHTML = '<i class="fas fa-check"></i>';
+          setTimeout(() => {
+            copyBtn.innerHTML = '<i class="far fa-copy"></i>';
+          }, 2000);
+        } catch (err) {
+          console.error('Clipboard write failed:', err);
+          Toast.show('Failed to copy', 'error');
+        }
+      };
+      
+      actions.appendChild(copyBtn);
+      b.appendChild(actions);
+    
     } else {
       const m = msg.fileType || 'application/octet-stream';
       const isEmb = (m.startsWith('image/') ||
