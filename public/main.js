@@ -1680,13 +1680,12 @@ const MessageRenderer = {
       t.appendChild(Utils.linkify(msg.content));
       b.appendChild(t);
 
-      // SPEC_ADDITION: Persistent Chat Message Copy Button
       const actions = document.createElement('div');
       actions.className = 'bubble-actions';
       const copyBtn = document.createElement('button');
       copyBtn.className = 'bubble-copy-btn';
       copyBtn.innerHTML = '<i class="far fa-copy"></i>';
-      
+
       copyBtn.onclick = async () => {
         if (!navigator.clipboard) {
           console.error('Clipboard API not available');
@@ -1704,10 +1703,10 @@ const MessageRenderer = {
           Toast.show('Failed to copy', 'error');
         }
       };
-      
+
       actions.appendChild(copyBtn);
       b.appendChild(actions);
-    
+
     } else {
       const m = msg.fileType || 'application/octet-stream';
       const isEmb = (m.startsWith('image/') ||
