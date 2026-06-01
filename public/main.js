@@ -624,6 +624,38 @@ const TouchDelegate = {
       e.stopImmediatePropagation();
       e.preventDefault();
       this.blockClick = false;
+      return;
+    }
+
+    if (window.matchMedia('(hover: none)').matches) {
+      const isLink = e.target.closest('a');
+      if (isLink) return;
+
+      const bubble = e.target.closest('.bubble');
+      const isAction = e.target.closest('.bubble-actions');
+
+      if (!isAction) {
+        document.querySelectorAll('.bubble.show-actions').forEach(b => {
+          if (b !== bubble) b.classList.remove('show-actions');
+        });
+        document.querySelectorAll('.message-group.show-timestamp').forEach(g => {
+          if (!bubble || g !== bubble.closest('.message-group')) {
+            g.classList.remove('show-timestamp');
+          }
+        });
+
+        if (bubble && bubble.querySelector('.bubble-actions')) {
+          bubble.classList.toggle('show-actions');
+          const grp = bubble.closest('.message-group');
+          if (grp) {
+            if (bubble.classList.contains('show-actions')) {
+              grp.classList.add('show-timestamp');
+            } else if (!grp.querySelector('.bubble.show-actions')) {
+              grp.classList.remove('show-timestamp');
+            }
+          }
+        }
+      }
     }
   },
 
@@ -1685,8 +1717,14 @@ const MessageRenderer = {
       const copyBtn = document.createElement('button');
       copyBtn.className = 'bubble-copy-btn';
       copyBtn.innerHTML = '<i class="far fa-copy"></i>';
+      copyBtn.setAttribute('aria-label', 'Copy message');
+      copyBtn.setAttribute('title', 'Copy message');
 
-      copyBtn.onclick = async () => {
+      let isCopied = false;
+      let flashTimeout;
+      let revertTimeout;
+
+      copyBtn.onclick = async (e) => {
         if (!navigator.clipboard) {
           console.error('Clipboard API not available');
           Toast.show('Failed to copy', 'error');
@@ -1694,15 +1732,43 @@ const MessageRenderer = {
         }
         try {
           await navigator.clipboard.writeText(msg.content);
-          copyBtn.innerHTML = '<i class="fas fa-check"></i>';
-          setTimeout(() => {
+          clearTimeout(revertTimeout);
+          clearTimeout(flashTimeout);
+
+          if (isCopied) {
             copyBtn.innerHTML = '<i class="far fa-copy"></i>';
-          }, 2000);
+            flashTimeout = setTimeout(() => {
+              copyBtn.innerHTML = '<i class="fas fa-check"></i>';
+            }, 100);
+          } else {
+            isCopied = true;
+            copyBtn.innerHTML = '<i class="fas fa-check"></i>';
+          }
+
+          if (window.matchMedia('(hover: none)').matches) {
+            revertTimeout = setTimeout(() => {
+              b.classList.remove('show-actions');
+              const parentGrp = b.closest('.message-group');
+              if (parentGrp && !parentGrp.querySelector('.bubble.show-actions')) {
+                parentGrp.classList.remove('show-timestamp');
+              }
+            }, 2000);
+          }
         } catch (err) {
           console.error('Clipboard write failed:', err);
           Toast.show('Failed to copy', 'error');
         }
       };
+
+      actions.addEventListener('transitionend', (e) => {
+        if (e.propertyName === 'opacity') {
+          const currentOpacity = parseFloat(window.getComputedStyle(actions).opacity);
+          if (currentOpacity === 0 && isCopied) {
+            isCopied = false;
+            copyBtn.innerHTML = '<i class="far fa-copy"></i>';
+          }
+        }
+      });
 
       actions.appendChild(copyBtn);
       b.appendChild(actions);
@@ -1927,6 +1993,11 @@ socket.on('error', (e) => {
 
 PreviewManager.init();
 TouchDelegate.init();
+
+UI.input.addEventListener('focus', () => {
+  document.querySelectorAll('.bubble.show-actions').forEach(b => b.classList.remove('show-actions'));
+  document.querySelectorAll('.message-group.show-timestamp').forEach(g => g.classList.remove('show-timestamp'));
+});
 
 UI.input.onkeydown = (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
