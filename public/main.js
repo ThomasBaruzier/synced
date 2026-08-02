@@ -5,95 +5,77 @@ const LogManager = {
   limit: 200,
 
   copy() {
-    console.log('Copying internal logs to clipboard.');
-    if (!this.buffer.length) return 'No logs.';
+    if (!this.buffer.length) return 'No diagnostics recorded.';
     return this.buffer.join('\n');
   },
 
   init() {
-    const replacer = (k, v) => {
-      if (typeof v === 'string' && v.startsWith('data:') && v.length > 50) {
-        return v.substring(0, 50) + '...';
+    const format = value => {
+      try {
+        if (value instanceof Error) {
+          return `${value.name}: ${value.message}`;
+        }
+        if (typeof value === 'object' && value !== null) {
+          return JSON.stringify(value);
+        }
+        return String(value);
+      } catch {
+        return String(value);
       }
-      return v;
     };
 
     const push = (level, args) => {
-      const msg = args.map(a => {
-        try {
-          if (typeof a === 'object' && a !== null) {
-            return JSON.stringify(a, replacer);
-          }
-          const s = String(a);
-          if (s.startsWith('data:') && s.length > 50) {
-            return s.substring(0, 50) + '...';
-          }
-          return s;
-        } catch {
-          return String(a);
-        }
-      }).join(' ');
-      const t = new Date().toLocaleTimeString();
-      const entry = `[${level}] ${t}: ${msg}`;
-      this.buffer.push(entry);
+      const message = args.map(format).join(' ');
+      const time = new Date().toLocaleTimeString();
+      this.buffer.push(`[${level}] ${time}: ${message}`);
       if (this.buffer.length > this.limit) this.buffer.shift();
     };
 
-    const oLog = console.log;
-    const oWarn = console.warn;
-    const oErr = console.error;
+    const originalWarn = console.warn;
+    const originalError = console.error;
 
-    console.log = (...a) => {
-      push('INF', a);
-      oLog.apply(console, a);
-    };
-    console.warn = (...a) => {
-      push('WRN', a);
-      oWarn.apply(console, a);
-    };
-    console.error = (...a) => {
-      push('ERR', a);
-      oErr.apply(console, a);
+    console.warn = (...args) => {
+      push('WRN', args);
+      originalWarn.apply(console, args);
     };
 
-    window.addEventListener('error', (e) => {
-      const msg = `Global error: ${e.message}`;
-      push('ERR', [msg, e.filename, e.lineno]);
+    console.error = (...args) => {
+      push('ERR', args);
+      originalError.apply(console, args);
+    };
+
+    window.addEventListener('error', event => {
+      push('ERR', [
+        `Global error: ${event.message}`,
+        event.filename,
+        event.lineno
+      ]);
     });
-    window.addEventListener('unhandledrejection', (e) => {
-      push('ERR', ['Unhandled Promise Rejection', e.reason]);
+
+    window.addEventListener('unhandledrejection', event => {
+      push('ERR', ['Unhandled Promise Rejection', event.reason]);
     });
-    console.log('LogManager initialized.');
   }
 };
 
 LogManager.init();
 
 const socket = io();
-console.log('Socket.io client initialized.');
 
-socket.on('connect', () => {
-  console.log('Socket connected with ID:', socket.id);
-});
-socket.on('disconnect', (reason) => {
-  const msg = `Socket disconnected: ${reason}`;
-  console.log(`${msg}. Socket.io will attempt to reconnect.`);
-});
-socket.on('connect_error', (error) => {
-  console.error('Socket connection error:', error);
+socket.on('connect_error', error => {
+  console.error('Socket connection failed:', error);
 });
 
 let myHue = 210;
 const TLD_SET = new Set();
 let tldsLoaded = false;
 
-console.log('Fetching TLD list...');
 fetch('/tlds.txt')
-  .then((res) => {
+  .then(res => {
     if (res.ok) return res.text();
     throw new Error(`TLD fetch failed: ${res.status}`);
   })
-  .then((text) => {
+  .then(text => {
     const lines = text.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -102,10 +84,9 @@ fetch('/tlds.txt')
       TLD_SET.add(line.toUpperCase());
     }
     tldsLoaded = true;
-    console.log(`Loaded ${TLD_SET.size} TLDs.`);
   })
-  .catch((err) => {
-    console.error('Failed to load TLD list:', err.message);
+  .catch(error => {
+    console.error('TLD list failed to load:', error);
   });
 
 const ANIM_CONFIG = {
@@ -117,8 +98,8 @@ const ANIM_CONFIG = {
 
 const CONFIG = {
   COPY_LIMIT_SIZE: 50 * 1024 * 1024,
-  MAX_UPLOAD_SIZE: 8 * 1024 * 1024 * 1024,
   MOBILE_BREAKPOINT: 900,
+  RESUME_STORAGE_TTL: 24 * 60 * 60 * 1000,
   TEXT_PREVIEW_LIMIT: 2 * 1024 * 1024
 };
 
@@ -127,7 +108,6 @@ const Toast = {
   tm: null,
 
   show(msg, type = 'info') {
-    console.log(`Showing toast: "${msg}" (${type})`);
     if (this.el) {
       this.el.remove();
       clearTimeout(this.tm);
@@ -191,16 +171,14 @@ const UI = {
 
 if (UI.debugBtn) {
   UI.debugBtn.onclick = () => {
-    console.log('Debug button clicked.');
     const logs = LogManager.copy();
     navigator.clipboard.writeText(logs)
       .then(() => {
         Toast.show('Logs copied to clipboard');
-        console.log('Logs successfully copied.');
       })
-      .catch(e => {
+      .catch(error => {
         Toast.show('Failed to copy logs', 'error');
-        console.error('Failed to copy logs:', e);
+        console.error('Diagnostic copy failed:', error);
       });
   };
 }
@@ -335,7 +313,6 @@ const Utils = {
   },
 
   triggerDownload(url, name) {
-    console.log(`Triggering download for "${name}"`);
     const a = document.createElement('a');
     a.href = url;
     a.download = name;
@@ -349,7 +326,6 @@ const Utils = {
 
 const Animation = {
   async clearChat() {
-    console.log('Starting clear chat animation.');
     const chatPane = UI.messageList.parentElement;
     const bubbles = Array.from(UI.messageList.querySelectorAll('.bubble'));
 
@@ -361,7 +337,8 @@ const Animation = {
       if (!el) continue;
       const rect = el.getBoundingClientRect();
 
-      const isVisible = (rect.top < containerRect.bottom && rect.bottom > containerRect.top);
+      const isVisible = rect.top < containerRect.bottom &&
+        rect.bottom > containerRect.top;
 
       if (isVisible) {
         const style = window.getComputedStyle(el);
@@ -369,25 +346,23 @@ const Animation = {
           ? style.borderTopColor
           : style.backgroundColor;
 
-        if (!color || color === 'rgba(0, 0, 0, 0)' || color === 'transparent') {
+        if (!color || color === 'rgba(0, 0, 0, 0)' ||
+          color === 'transparent') {
           color = '#2c2c2e';
         }
 
         visibleItems.push({
           element: el,
-          bubble: bubble,
-          rect: rect,
-          color: color
+          bubble,
+          rect,
+          color
         });
       } else {
         bubble.style.visibility = 'hidden';
       }
     }
 
-    if (visibleItems.length === 0) {
-      console.log('No visible bubbles to animate.');
-      return;
-    }
+    if (!visibleItems.length) return;
 
     visibleItems.reverse();
     const promises = [];
@@ -395,21 +370,20 @@ const Animation = {
     await Utils.nextFrame();
 
     for (const [i, item] of visibleItems.entries()) {
-      const p = new Promise(resolve => {
+      const promise = new Promise(resolve => {
         setTimeout(() => {
           item.bubble.style.visibility = 'hidden';
           this.explodeRect(item.rect, item.color, chatPane).then(resolve);
         }, i * ANIM_CONFIG.STAGGER_DELAY_MS);
       });
-      promises.push(p);
+      promises.push(promise);
     }
 
     await Promise.all(promises);
-    console.log('Clear chat animation finished.');
   },
 
   explodeRect(rect, color, container) {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       const contRect = container.getBoundingClientRect();
 
       const pCont = document.createElement('div');
@@ -436,18 +410,23 @@ const Animation = {
         p.style.top = `${Math.random() * 100}%`;
         pCont.appendChild(p);
 
-        const tx = (Math.random() - 0.5) * ANIM_CONFIG.SPREAD_MULTIPLIER;
-        const ty = (Math.random() + ANIM_CONFIG.GRAVITY_BIAS) * ANIM_CONFIG.SPREAD_MULTIPLIER;
+        const tx = (Math.random() - 0.5) *
+          ANIM_CONFIG.SPREAD_MULTIPLIER;
+        const ty = (Math.random() + ANIM_CONFIG.GRAVITY_BIAS) *
+          ANIM_CONFIG.SPREAD_MULTIPLIER;
 
-        const a = p.animate([
+        const animation = p.animate([
           { transform: 'translate(0, 0) scale(1)', opacity: 1 },
-          { transform: `translate(${tx}px, ${ty}px) scale(0)`, opacity: 0 }
+          {
+            transform: `translate(${tx}px, ${ty}px) scale(0)`,
+            opacity: 0
+          }
         ], {
           duration: 500 + Math.random() * 400,
           easing: 'cubic-bezier(0.1, 0.9, 0.2, 1)',
           fill: 'forwards'
         });
-        anims.push(a.finished);
+        anims.push(animation.finished);
       }
 
       Promise.all(anims).then(() => {
@@ -462,7 +441,6 @@ const AudioFactory = {
   current: null,
 
   create(url, name) {
-    console.log(`Creating audio player for "${name}".`);
     const el = document.createElement('div');
     el.className = 'audio-player';
     el.innerHTML = `
@@ -500,67 +478,61 @@ const AudioFactory = {
     let isDragging = false;
     let duration = 0;
 
-    const format = (sec) => {
+    const format = sec => {
       if (!sec || isNaN(sec)) return '0:00';
-      const m = Math.floor(sec / 60);
-      const s = Math.floor(sec % 60);
-      return `${m}:${s.toString().padStart(2, '0')}`;
+      const minutes = Math.floor(sec / 60);
+      const seconds = Math.floor(sec % 60);
+      return `${minutes}:${seconds.toString().padStart(2, '0')}`;
     };
 
     const updateProgress = () => {
       if (isDragging) return;
-      const cur = audio.currentTime;
-      const pct = (cur / duration) * 100 || 0;
-      slider.value = pct;
-      fill.style.width = `${pct}%`;
-      timeDisplay.textContent = `${format(cur)} / ${format(duration)}`;
+      const current = audio.currentTime;
+      const percent = (current / duration) * 100 || 0;
+      slider.value = percent;
+      fill.style.width = `${percent}%`;
+      timeDisplay.textContent =
+        `${format(current)} / ${format(duration)}`;
     };
 
     const toggle = () => {
       if (audio.paused) {
-        console.log(`Playing audio: "${name}"`);
         if (AudioFactory.current &&
           AudioFactory.current !== audio) {
-          console.log('Pausing other audio instance.');
           AudioFactory.current.pause();
         }
         AudioFactory.current = audio;
-        audio.play().catch(e =>
-          console.error('Audio play error:', e));
+        audio.play().catch(error => {
+          console.error('Audio playback failed:', error);
+        });
       } else {
-        console.log(`Pausing audio: "${name}"`);
         audio.pause();
       }
     };
 
-    btn.onclick = (e) => {
-      e.stopPropagation();
+    btn.onclick = event => {
+      event.stopPropagation();
       toggle();
     };
 
-    slider.onclick = (e) => e.stopPropagation();
+    slider.onclick = event => event.stopPropagation();
 
     slider.oninput = () => {
-      if (!isDragging) {
-        console.log(`Audio seek started: "${name}"`);
-        isDragging = true;
-      }
-      const pct = slider.value;
-      fill.style.width = `${pct}%`;
-      const time = (pct / 100) * duration;
-      timeDisplay.textContent = `${format(time)} / ${format(duration)}`;
+      isDragging = true;
+      const percent = slider.value;
+      fill.style.width = `${percent}%`;
+      const time = (percent / 100) * duration;
+      timeDisplay.textContent =
+        `${format(time)} / ${format(duration)}`;
     };
 
     slider.onchange = () => {
-      console.log(`Audio seek ended: ${slider.value}% ("${name}")`);
       isDragging = false;
-      const time = (slider.value / 100) * duration;
-      audio.currentTime = time;
+      audio.currentTime = (slider.value / 100) * duration;
     };
 
     audio.onloadedmetadata = () => {
       duration = audio.duration;
-      console.log(`Audio loaded "${name}": ${duration}s.`);
       timeDisplay.textContent = `0:00 / ${format(duration)}`;
     };
 
@@ -584,8 +556,8 @@ const AudioFactory = {
       el.classList.remove('playing');
     };
 
-    audio.onerror = (e) => {
-      console.error(`Audio error "${name}":`, e.target.error);
+    audio.onerror = event => {
+      console.error('Audio element failed:', event.target.error);
     };
 
     return el;
@@ -610,48 +582,49 @@ const TouchDelegate = {
     list.addEventListener('touchend', this.onEnd.bind(this));
     list.addEventListener('touchcancel', this.onEnd.bind(this));
     list.addEventListener('click', this.onClick.bind(this), true);
-    list.addEventListener('contextmenu', (e) => {
-      if (e.target.closest(
+    list.addEventListener('contextmenu', event => {
+      if (event.target.closest(
         '.file-card, .bubble-embed-container, .audio-player')) {
-        e.preventDefault();
+        event.preventDefault();
       }
     });
-    console.log('TouchDelegate initialized.');
   },
 
-  onClick(e) {
+  onClick(event) {
     if (this.blockClick) {
-      e.stopImmediatePropagation();
-      e.preventDefault();
+      event.stopImmediatePropagation();
+      event.preventDefault();
       this.blockClick = false;
       return;
     }
 
     if (window.matchMedia('(hover: none)').matches) {
-      const isLink = e.target.closest('a');
+      const isLink = event.target.closest('a');
       if (isLink) return;
 
-      const bubble = e.target.closest('.bubble');
-      const isAction = e.target.closest('.bubble-actions');
+      const bubble = event.target.closest('.bubble');
+      const isAction = event.target.closest('.bubble-actions');
 
       if (!isAction) {
-        document.querySelectorAll('.bubble.show-actions').forEach(b => {
-          if (b !== bubble) b.classList.remove('show-actions');
+        document.querySelectorAll('.bubble.show-actions').forEach(item => {
+          if (item !== bubble) item.classList.remove('show-actions');
         });
-        document.querySelectorAll('.message-group.show-timestamp').forEach(g => {
-          if (!bubble || g !== bubble.closest('.message-group')) {
-            g.classList.remove('show-timestamp');
+        document.querySelectorAll(
+          '.message-group.show-timestamp'
+        ).forEach(group => {
+          if (!bubble || group !== bubble.closest('.message-group')) {
+            group.classList.remove('show-timestamp');
           }
         });
 
         if (bubble && bubble.querySelector('.bubble-actions')) {
           bubble.classList.toggle('show-actions');
-          const grp = bubble.closest('.message-group');
-          if (grp) {
+          const group = bubble.closest('.message-group');
+          if (group) {
             if (bubble.classList.contains('show-actions')) {
-              grp.classList.add('show-timestamp');
-            } else if (!grp.querySelector('.bubble.show-actions')) {
-              grp.classList.remove('show-timestamp');
+              group.classList.add('show-timestamp');
+            } else if (!group.querySelector('.bubble.show-actions')) {
+              group.classList.remove('show-timestamp');
             }
           }
         }
@@ -663,42 +636,39 @@ const TouchDelegate = {
     this.reset();
   },
 
-  onMove(e) {
+  onMove(event) {
     if (!this.elem) return;
-    const dx = e.touches[0].clientX - this.startX;
-    const dy = e.touches[0].clientY - this.startY;
-    const distSq = dx * dx + dy * dy;
-    if (distSq > 225) {
-      console.log('Touch move, canceling long press.');
-      this.reset();
-    }
+    const dx = event.touches[0].clientX - this.startX;
+    const dy = event.touches[0].clientY - this.startY;
+    if (dx * dx + dy * dy > 225) this.reset();
   },
 
-  onStart(e) {
-    if (e.touches.length > 1) return;
-    const t = e.target.closest(
+  onStart(event) {
+    if (event.touches.length > 1) return;
+    const target = event.target.closest(
       '.file-card, .bubble-embed-container, .audio-player'
     );
-    if (!t) return;
+    if (!target) return;
 
-    this.elem = t;
-    this.startX = e.touches[0].clientX;
-    this.startY = e.touches[0].clientY;
+    this.elem = target;
+    this.startX = event.touches[0].clientX;
+    this.startY = event.touches[0].clientY;
     this.blockClick = false;
     clearTimeout(this.timer);
 
     this.timer = setTimeout(() => {
       if (!this.elem) return;
-      console.log('Long-press triggered on:', this.elem);
       this.blockClick = true;
       this.elem.classList.add('long-pressing');
       if (navigator.vibrate) navigator.vibrate(50);
 
-      const b = this.elem.closest('.bubble');
-      if (b && b.dataset.content) {
-        console.log(`Long-press download: "${b.dataset.name}"`);
+      const bubble = this.elem.closest('.bubble');
+      if (bubble && bubble.dataset.content) {
         setTimeout(() => {
-          Utils.triggerDownload(b.dataset.content, b.dataset.name);
+          Utils.triggerDownload(
+            bubble.dataset.downloadUrl || bubble.dataset.content,
+            bubble.dataset.name
+          );
         }, 50);
       }
     }, 300);
@@ -763,11 +733,7 @@ const UploadManager = {
   totalBytes: 0,
 
   add(files) {
-    const size = files.reduce((acc, f) => acc + f.size, 0);
-    console.log(`Adding ${files.length} files. Total: ${Utils.formatSize(size)}`);
-    for (const f of files) {
-      this.totalBytes += f.size;
-    }
+    for (const file of files) this.totalBytes += file.size;
     this.queue.push(...files);
     this.processNext();
   },
@@ -775,7 +741,6 @@ const UploadManager = {
   processNext() {
     if (this.processing || !this.queue.length) {
       if (!this.queue.length && this.totalBytes > 0) {
-        console.log('Upload queue finished.');
         UI.loader.style.width = '100%';
         setTimeout(() => {
           UI.loader.classList.remove('active');
@@ -788,25 +753,21 @@ const UploadManager = {
 
     this.processing = true;
     const file = this.queue.shift();
-    const sizeStr = Utils.formatSize(file.size);
-    console.log(`Processing "${file.name}" (${sizeStr})`);
-
-    if (file.size > CONFIG.MAX_UPLOAD_SIZE) {
-      const msg = `File "${file.name}" too large (${sizeStr}).`;
-      console.error(msg);
-      Toast.show(msg, 'error');
-      this.processing = false;
-      return this.processNext();
-    }
 
     this.uploadFile(file)
-      .then(res => {
+      .then(result => {
         SocketManager.send(
-          'file', res.url, file.name, file.type, file.size
+          'file',
+          result.url,
+          result.name,
+          result.type,
+          result.size,
+          result.downloadUrl
         );
       })
-      .catch(e => {
-        Toast.show(e.message, 'error');
+      .catch(error => {
+        console.error('Upload failed:', error);
+        Toast.show(error.message, 'error');
       })
       .finally(() => {
         this.loadedBytes += file.size;
@@ -816,57 +777,437 @@ const UploadManager = {
       });
   },
 
-  updateProgress(inc) {
-    if (this.totalBytes === 0) return;
-    const cur = this.loadedBytes + inc;
-    const pct = Math.min((cur / this.totalBytes) * 100, 100);
+  updateProgress(currentFileBytes) {
+    if (!this.totalBytes) return;
+    const current = this.loadedBytes + currentFileBytes;
+    const percent = Math.min(
+      current / this.totalBytes * 100,
+      100
+    );
     UI.loader.classList.add('active');
-    UI.loader.style.width = `${pct}%`;
+    UI.loader.style.width = `${percent}%`;
   },
 
-  uploadFile(file) {
-    return new Promise((resolve, reject) => {
-      const useDataURL = file.size <= 500 * 1024;
-      console.log(`Upload "${file.name}": ${useDataURL ? 'Data URL' : 'XHR'}.`);
+  async resumeKey(file) {
+    if (!globalThis.crypto?.subtle) return null;
 
-      if (useDataURL) {
-        const r = new FileReader();
-        r.onload = () => {
-          console.log(`Read "${file.name}" as Data URL.`);
-          resolve({ url: r.result });
-        };
-        r.onerror = (err) => {
-          console.error(`FileReader error "${file.name}":`, err);
-          reject(new Error(`Failed to read file: ${file.name}`));
-        };
-        r.readAsDataURL(file);
-      } else {
-        const xhr = new XMLHttpRequest();
-        const fd = new FormData();
-        fd.append('file', file);
-        xhr.open('POST', '/upload');
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) this.updateProgress(e.loaded);
-        };
-        xhr.onload = () => {
-          if (xhr.status === 200) {
-            const response = JSON.parse(xhr.responseText);
-            console.log(`XHR upload success "${file.name}".`);
-            resolve(response);
-          } else {
-            console.error(`XHR fail "${file.name}": ${xhr.status}`);
-            reject(new Error(`Upload failed for ${file.name}`));
-          }
-        };
-        xhr.onerror = () => {
-          console.error(`XHR network error "${file.name}".`);
-          reject(new Error('Network error during upload'));
-        };
-        xhr.send(fd);
+    try {
+      const source = [
+        file.name,
+        file.size,
+        file.lastModified
+      ].join('\0');
+      const digest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(source)
+      );
+      const hex = Array.from(
+        new Uint8Array(digest),
+        byte => byte.toString(16).padStart(2, '0')
+      ).join('');
+      return `synced-upload:${hex}`;
+    } catch {
+      return null;
+    }
+  },
+
+  purgeResume() {
+    const now = Date.now();
+
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (!key?.startsWith('synced-upload:')) continue;
+
+        let value = null;
+
+        try {
+          value = JSON.parse(localStorage.getItem(key));
+        } catch {}
+
+        const valid = value &&
+          /^[a-f0-9]{32}$/.test(value.uploadId) &&
+          Number.isSafeInteger(value.savedAt) &&
+          value.savedAt > 0 &&
+          value.savedAt <= now &&
+          now - value.savedAt <= CONFIG.RESUME_STORAGE_TTL;
+
+        if (!valid) localStorage.removeItem(key);
       }
+    } catch {}
+  },
+
+  loadResume(key) {
+    if (!key) return null;
+
+    try {
+      const value = JSON.parse(localStorage.getItem(key));
+      const now = Date.now();
+
+      if (
+        !value ||
+        !/^[a-f0-9]{32}$/.test(value.uploadId) ||
+        !Number.isSafeInteger(value.savedAt) ||
+        value.savedAt <= 0 ||
+        value.savedAt > now ||
+        now - value.savedAt > CONFIG.RESUME_STORAGE_TTL
+      ) {
+        localStorage.removeItem(key);
+        return null;
+      }
+
+      return value;
+    } catch {
+      return null;
+    }
+  },
+
+  saveResume(key, uploadId) {
+    if (!key) return;
+
+    try {
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          uploadId,
+          savedAt: Date.now()
+        })
+      );
+    } catch {}
+  },
+
+  clearResume(key) {
+    if (!key) return;
+
+    try {
+      localStorage.removeItem(key);
+    } catch {}
+  },
+
+  error(message, status = 0) {
+    const error = new Error(message);
+    error.status = status;
+    return error;
+  },
+
+  async responseError(response, fallback) {
+    let message = fallback;
+    try {
+      const body = await response.json();
+      if (body?.error) message = body.error;
+    } catch {}
+    return this.error(message, response.status);
+  },
+
+  stateFromData(data) {
+    const offset = Number(data.offset);
+    const length = Number(data.length);
+    const chunkSize = Number(data.chunkSize);
+
+    if (
+      !data ||
+      !/^[a-f0-9]{32}$/.test(data.uploadId) ||
+      !Number.isSafeInteger(offset) ||
+      !Number.isSafeInteger(length) ||
+      !Number.isSafeInteger(chunkSize) ||
+      offset < 0 ||
+      length < 0 ||
+      offset > length ||
+      chunkSize <= 0
+    ) {
+      throw this.error('Invalid upload response');
+    }
+
+    return {
+      uploadId: data.uploadId,
+      offset,
+      length,
+      chunkSize,
+      complete: data.complete === true,
+      result: data.complete === true ? data : null
+    };
+  },
+
+  async initialize(file) {
+    const response = await fetch('/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: file.name,
+        size: file.size
+      })
     });
+
+    if (!response.ok) {
+      throw await this.responseError(
+        response,
+        `Unable to start upload (${response.status})`
+      );
+    }
+
+    return this.stateFromData(await response.json());
+  },
+
+  async head(uploadId) {
+    const response = await fetch('/upload', {
+      method: 'HEAD',
+      cache: 'no-store',
+      headers: { 'Upload-Id': uploadId }
+    });
+
+    if (response.status === 404) return null;
+
+    if (!response.ok) {
+      throw this.error(
+        `Unable to read upload status (${response.status})`,
+        response.status
+      );
+    }
+
+    const offset = Number(response.headers.get('Upload-Offset'));
+    const length = Number(response.headers.get('Upload-Length'));
+    const chunkSize = Number(
+      response.headers.get('Upload-Chunk-Size')
+    );
+    const complete =
+      response.headers.get('Upload-Complete') === 'true';
+
+    if (
+      !Number.isSafeInteger(offset) ||
+      !Number.isSafeInteger(length) ||
+      !Number.isSafeInteger(chunkSize) ||
+      offset < 0 ||
+      length < 0 ||
+      offset > length ||
+      chunkSize <= 0
+    ) {
+      throw this.error('Invalid upload status');
+    }
+
+    const result = complete ? {
+      uploadId,
+      offset,
+      length,
+      chunkSize,
+      complete: true,
+      url: response.headers.get('Upload-URL'),
+      downloadUrl: response.headers.get('Upload-Download-URL'),
+      name: response.headers.get('Upload-Name'),
+      size: length,
+      type: response.headers.get('Upload-Type') ||
+        'application/octet-stream'
+    } : null;
+
+    if (
+      complete &&
+      (!result.url || !result.downloadUrl || !result.name)
+    ) {
+      throw this.error('Incomplete upload status');
+    }
+
+    return {
+      uploadId,
+      offset,
+      length,
+      chunkSize,
+      complete,
+      result
+    };
+  },
+
+  async prepare(file, resumeKey) {
+    const resume = this.loadResume(resumeKey);
+
+    if (resume) {
+      const state = await this.head(resume.uploadId);
+
+      if (state && state.length === file.size) return state;
+      this.clearResume(resumeKey);
+    }
+
+    const state = await this.initialize(file);
+
+    if (state.length !== file.size) {
+      throw this.error('Upload session does not match file');
+    }
+
+    if (!state.complete) {
+      this.saveResume(resumeKey, state.uploadId);
+    }
+
+    return state;
+  },
+
+  patch(uploadId, offset, chunk) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PATCH', '/upload');
+      xhr.setRequestHeader('Upload-Id', uploadId);
+      xhr.setRequestHeader('Upload-Offset', String(offset));
+      xhr.setRequestHeader(
+        'Content-Type',
+        'application/octet-stream'
+      );
+
+      xhr.upload.onprogress = event => {
+        if (event.lengthComputable) {
+          this.updateProgress(offset + event.loaded);
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          try {
+            resolve({
+              complete: true,
+              result: JSON.parse(xhr.responseText)
+            });
+          } catch {
+            reject(this.error('Invalid completion response'));
+          }
+          return;
+        }
+
+        if (xhr.status === 204) {
+          const nextOffset = Number(
+            xhr.getResponseHeader('Upload-Offset')
+          );
+          if (
+            !Number.isSafeInteger(nextOffset) ||
+            nextOffset <= offset ||
+            nextOffset > offset + chunk.size
+          ) {
+            reject(this.error('Invalid chunk response'));
+            return;
+          }
+          resolve({ complete: false, offset: nextOffset });
+          return;
+        }
+
+        let message = `Chunk upload failed (${xhr.status})`;
+        try {
+          const body = JSON.parse(xhr.responseText);
+          if (body?.error) message = body.error;
+        } catch {}
+
+        reject(this.error(message, xhr.status));
+      };
+
+      xhr.onerror = () => {
+        reject(this.error('Network error during upload'));
+      };
+
+      xhr.send(chunk);
+    });
+  },
+
+  retryable(error) {
+    return !error.status ||
+      error.status === 409 ||
+      error.status === 429 ||
+      error.status >= 500;
+  },
+
+  wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  },
+
+  async recover(uploadId, attempt) {
+    let lastError = null;
+
+    for (let i = 0; i < 3; i++) {
+      const delay = Math.min(
+        1000 * Math.pow(2, attempt + i - 1),
+        8000
+      );
+      await this.wait(delay);
+
+      try {
+        return await this.head(uploadId);
+      } catch (error) {
+        lastError = error;
+        if (!this.retryable(error)) throw error;
+      }
+    }
+
+    throw lastError || this.error('Unable to resume upload');
+  },
+
+  async uploadFile(file) {
+    const resumeKey = await this.resumeKey(file);
+    let state = await this.prepare(file, resumeKey);
+
+    if (state.complete) {
+      this.clearResume(resumeKey);
+      return state.result;
+    }
+
+    let offset = state.offset;
+    let chunkSize = state.chunkSize;
+    let failures = 0;
+
+    this.updateProgress(offset);
+
+    while (offset < file.size) {
+      const end = Math.min(offset + chunkSize, file.size);
+      const chunk = file.slice(offset, end);
+
+      try {
+        const response = await this.patch(
+          state.uploadId,
+          offset,
+          chunk
+        );
+
+        failures = 0;
+
+        if (response.complete) {
+          this.clearResume(resumeKey);
+          return response.result;
+        }
+
+        offset = response.offset;
+        this.saveResume(resumeKey, state.uploadId);
+        this.updateProgress(offset);
+      } catch (error) {
+        if (!this.retryable(error) || ++failures > 5) throw error;
+
+        console.warn('Upload interrupted; reconciling offset.');
+
+        state = await this.recover(state.uploadId, failures);
+        if (!state) {
+          this.clearResume(resumeKey);
+          throw this.error('Upload session expired', 404);
+        }
+
+        if (state.length !== file.size) {
+          this.clearResume(resumeKey);
+          throw this.error('Upload session does not match file');
+        }
+
+        if (state.complete) {
+          this.clearResume(resumeKey);
+          return state.result;
+        }
+
+        offset = state.offset;
+        chunkSize = state.chunkSize;
+        this.saveResume(resumeKey, state.uploadId);
+        this.updateProgress(offset);
+      }
+    }
+
+    state = await this.head(state.uploadId);
+    if (state?.complete) {
+      this.clearResume(resumeKey);
+      return state.result;
+    }
+
+    throw this.error('Upload finished without finalization');
   }
 };
+
+UploadManager.purgeResume();
 
 const PreviewManager = {
   _clearTimer: null,
@@ -890,14 +1231,13 @@ const PreviewManager = {
       if (currentType && currentType.startsWith(vidOrient)) return;
     }
 
-    console.log(`Locking orientation to "${vidOrient}" (Force: ${force})`);
     this.lockPromise = this.lockPromise.then(async () => {
       try {
         if (screen.orientation?.lock) {
           await screen.orientation.lock(vidOrient);
         }
-      } catch (e) {
-        console.warn('Orientation lock failed:', e);
+      } catch (error) {
+        console.warn('Orientation lock failed:', error);
       }
     });
   },
@@ -928,9 +1268,8 @@ const PreviewManager = {
       if (!this.autoFullscreenAllowed) return;
 
       if (vidOrient === 'landscape' && !isFS) {
-        console.log('Auto-fullscreen triggered (landscape).');
-        this.enterFullscreen('auto').catch((e) => {
-          console.warn('Auto-fullscreen failed:', e);
+        this.enterFullscreen('auto').catch(error => {
+          console.warn('Automatic fullscreen failed:', error);
         });
       }
     }
@@ -938,7 +1277,6 @@ const PreviewManager = {
 
   cleanup() {
     if (this._tempPdfUrl) {
-      console.log('Revoking temp PDF URL.');
       URL.revokeObjectURL(this._tempPdfUrl);
       this._tempPdfUrl = null;
     }
@@ -949,13 +1287,13 @@ const PreviewManager = {
     const wasActive = UI.modal.classList.contains('active');
     if (!this.current && !wasActive) return;
 
-    console.log('Closing preview.');
     if (this.mediaElement) {
-      try { this.mediaElement.pause(); } catch (e) {}
+      try {
+        this.mediaElement.pause();
+      } catch {}
     }
 
     this.abortController?.abort();
-    if (this.abortController) console.log('Aborted pending fetch.');
     this.abortController = null;
 
     this.exitFullscreen();
@@ -988,8 +1326,7 @@ const PreviewManager = {
 
   async copyContent(btn) {
     if (!this.current) return;
-    const { name, type, size, url } = this.current;
-    console.log(`Copy content: "${name}" (${type})`);
+    const { type, size, url } = this.current;
 
     if (size > CONFIG.COPY_LIMIT_SIZE) {
       return Tooltip.show(btn, 'Too Large', 'error');
@@ -1015,7 +1352,6 @@ const PreviewManager = {
 
     try {
       if (isImg) {
-        console.log('Copying image.');
         const pngPromise = new Promise(async (resolve, reject) => {
           try {
             const res = await fetch(url);
@@ -1029,26 +1365,25 @@ const PreviewManager = {
             ctx.drawImage(bitmap, 0, 0);
             bitmap.close();
 
-            canvas.toBlob((pngBlob) => {
+            canvas.toBlob(pngBlob => {
               if (pngBlob) resolve(pngBlob);
               else reject(new Error('Canvas toBlob failed'));
             }, 'image/png', 1.0);
-          } catch (err) {
-            reject(err);
+          } catch (error) {
+            reject(error);
           }
         });
 
         const item = new ClipboardItem({ 'image/png': pngPromise });
         await navigator.clipboard.write([item]);
       } else {
-        console.log('Copying text.');
         const res = await fetch(url);
         const text = await res.text();
         await navigator.clipboard.writeText(text);
       }
       Tooltip.show(btn, 'Copied!');
-    } catch (e) {
-      console.error('Copy content failed:', e);
+    } catch (error) {
+      console.error('Content copy failed:', error);
       Tooltip.show(btn, 'Failed', 'error');
     } finally {
       btn.innerHTML = oldHtml;
@@ -1058,13 +1393,13 @@ const PreviewManager = {
 
   copyLink(btn) {
     if (!this.current) return;
-    console.log(`Copy link: "${this.current.name}"`);
-    if (this.current.url.startsWith('data:')) {
-      return Tooltip.show(btn, 'No Link', 'error');
-    }
-    const u = new URL(this.current.url, location.origin).href;
-    navigator.clipboard.writeText(u);
-    Tooltip.show(btn, 'Copied!');
+    const url = new URL(this.current.url, location.origin).href;
+    navigator.clipboard.writeText(url)
+      .then(() => Tooltip.show(btn, 'Copied!'))
+      .catch(error => {
+        console.error('Link copy failed:', error);
+        Tooltip.show(btn, 'Failed', 'error');
+      });
   },
 
   createCard(icon, name, label, actionBtn) {
@@ -1076,9 +1411,9 @@ const PreviewManager = {
         <div class="card-label"></div>
       </div>`;
 
-    const lbl = card.querySelector('.card-label');
-    lbl.textContent = name;
-    lbl.title = name;
+    const labelElement = card.querySelector('.card-label');
+    labelElement.textContent = name;
+    labelElement.title = name;
 
     if (label) {
       const sub = document.createElement('div');
@@ -1095,14 +1430,15 @@ const PreviewManager = {
 
   download(btn) {
     if (!this.current) return;
-    console.log(`Download: "${this.current.name}"`);
-    Utils.triggerDownload(this.current.url, this.current.name);
+    Utils.triggerDownload(
+      this.current.downloadUrl || this.current.url,
+      this.current.name
+    );
     Tooltip.show(btn, 'Started!');
   },
 
   async enterFullscreen(mode) {
     if (!this.mediaElement) return;
-    console.log(`Enter fullscreen (${mode}).`);
     this.fullscreenMode = mode;
     try {
       if (this.mediaElement.requestFullscreen) {
@@ -1112,22 +1448,25 @@ const PreviewManager = {
       } else if (this.mediaElement.webkitRequestFullscreen) {
         await this.mediaElement.webkitRequestFullscreen();
       }
-    } catch (e) {
+    } catch (error) {
       this.fullscreenMode = 'none';
-      throw e;
+      throw error;
     }
   },
 
   exitFullscreen() {
     try {
-      const d = document;
-      if (d.fullscreenElement || d.webkitFullscreenElement) {
-        console.log('Exiting fullscreen.');
-        if (d.exitFullscreen) {
-          d.exitFullscreen().catch(e =>
-            console.warn('exitFullscreen failed', e));
-        } else if (d.webkitExitFullscreen) {
-          d.webkitExitFullscreen();
+      const documentRef = document;
+      if (
+        documentRef.fullscreenElement ||
+        documentRef.webkitFullscreenElement
+      ) {
+        if (documentRef.exitFullscreen) {
+          documentRef.exitFullscreen().catch(error => {
+            console.warn('Fullscreen exit failed:', error);
+          });
+        } else if (documentRef.webkitExitFullscreen) {
+          documentRef.webkitExitFullscreen();
         }
       }
     } catch {}
@@ -1140,10 +1479,12 @@ const PreviewManager = {
 
   getDeviceOrientation() {
     if (screen.orientation?.type) {
-      if (screen.orientation.type.includes('landscape'))
+      if (screen.orientation.type.includes('landscape')) {
         return 'landscape';
-      if (screen.orientation.type.includes('portrait'))
+      }
+      if (screen.orientation.type.includes('portrait')) {
         return 'portrait';
+      }
     }
     if (window.matchMedia('(orientation: landscape)').matches) {
       return 'landscape';
@@ -1165,10 +1506,8 @@ const PreviewManager = {
   },
 
   handleFullscreenExit() {
-    console.log('Fullscreen exit handler.');
     if (this.fullscreenMode === 'auto' &&
       this.getDeviceOrientation() === 'landscape') {
-      console.log('Disabling auto-fullscreen (manual exit).');
       this.autoFullscreenAllowed = false;
     }
     this.fullscreenMode = 'none';
@@ -1177,34 +1516,36 @@ const PreviewManager = {
 
   init() {
     const allTooltipBtns = [...UI.copyContentBtns, ...UI.actionBtns];
-    allTooltipBtns.forEach(b => {
-      if (b) b.dataset.orig = b.getAttribute('data-tooltip') || '';
+    allTooltipBtns.forEach(button => {
+      if (button) {
+        button.dataset.orig =
+          button.getAttribute('data-tooltip') || '';
+      }
     });
 
-    const bind = (btn, fn, name) => {
+    const bind = (btn, fn) => {
       if (!btn) return;
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        console.log(`Action: ${name}`);
+      btn.addEventListener('click', event => {
+        event.stopPropagation();
         fn(btn);
       });
     };
 
-    UI.copyContentBtns.forEach(b =>
-      bind(b, btn => this.copyContent(btn), 'copyContent'));
+    UI.copyContentBtns.forEach(button =>
+      bind(button, btn => this.copyContent(btn)));
 
-    const copyLink = b => this.copyLink(b);
-    const dlLink = b => this.download(b);
+    const copyLink = button => this.copyLink(button);
+    const download = button => this.download(button);
 
-    [0, 2].forEach(i => bind(UI.actionBtns[i], copyLink, 'copyLink'));
-    [1, 3].forEach(i => bind(UI.actionBtns[i], dlLink, 'download'));
+    [0, 2].forEach(i => bind(UI.actionBtns[i], copyLink));
+    [1, 3].forEach(i => bind(UI.actionBtns[i], download));
 
     UI.modalCloseBtn.onclick = () => this.close();
-    UI.modal.onclick = (e) => {
-      const isOut = e.target === UI.modal ||
-        e.target.classList.contains('modal-overlay') ||
-        e.target.classList.contains('modal-container') ||
-        e.target.classList.contains('modal-content');
+    UI.modal.onclick = event => {
+      const isOut = event.target === UI.modal ||
+        event.target.classList.contains('modal-overlay') ||
+        event.target.classList.contains('modal-container') ||
+        event.target.classList.contains('modal-content');
       if (isOut) this.close();
     };
 
@@ -1232,7 +1573,6 @@ const PreviewManager = {
     mq.addEventListener('change', () => {
       if (!this.isInFullscreen()) this.render();
     });
-    console.log('PreviewManager initialized.');
   },
 
   isInFullscreen() {
@@ -1257,7 +1597,6 @@ const PreviewManager = {
 
   onFullscreenChange() {
     const isFS = this.isInFullscreen();
-    console.log(`FS change. Active: ${isFS}, Mode: ${this.fullscreenMode}`);
     if (isFS) {
       if (this.fullscreenMode === 'none') {
         this.fullscreenMode = 'manual';
@@ -1272,10 +1611,9 @@ const PreviewManager = {
     }
   },
 
-  open(url, type, name, size) {
-    console.log(`Open preview: "${name}" (${type})`);
+  open(url, downloadUrl, type, name, size) {
     this.close();
-    this.current = { url, type, name, size };
+    this.current = { url, downloadUrl, type, name, size };
     this.render();
   },
 
@@ -1287,16 +1625,15 @@ const PreviewManager = {
 
     const isDesk = !this.isMobileLayout();
     const container = isDesk ? UI.previewStage : UI.modalContent;
-    console.log(`Rendering (${isDesk ? 'Desktop' : 'Mobile'}).`);
 
     if (isDesk) UI.modal.classList.remove('active');
     else UI.modal.classList.add('active');
 
     const { type, url, name, size } = this.current;
-    const isSafe = url.startsWith('/uploads/') ||
-      url.startsWith('data:');
+    const isSafe = url.startsWith('/uploads/');
 
-    if (this.mediaElement && this.mediaElement.dataset.src === url) {
+    if (this.mediaElement &&
+      this.mediaElement.dataset.src === url) {
       if (!container.contains(this.mediaElement)) {
         this.mediaElement.className = isDesk
           ? 'preview-item layout-fit'
@@ -1315,7 +1652,8 @@ const PreviewManager = {
     }
 
     this.abortController = new AbortController();
-    container.innerHTML = '<div class="loader-spinner">Loading...</div>';
+    container.innerHTML =
+      '<div class="loader-spinner">Loading...</div>';
 
     let node;
     const isMobilePdf = type === 'application/pdf' &&
@@ -1326,15 +1664,18 @@ const PreviewManager = {
       node = this.createCard('fa-file-alt', 'File empty');
     } else if (!isSafe) {
       node = this.createCard('fa-shield-alt', 'Blocked');
-    } else if (Utils.isWebSafe(type) && type.startsWith('image/')) {
+    } else if (Utils.isWebSafe(type) &&
+      type.startsWith('image/')) {
       node = this.renderImage(url);
-    } else if (Utils.isWebSafe(type) && type.startsWith('video/')) {
+    } else if (Utils.isWebSafe(type) &&
+      type.startsWith('video/')) {
       node = this.renderVideo(url);
     } else if (type.startsWith('audio/')) {
       node = this.renderAudio(url);
     } else if (type === 'application/pdf') {
       node = this.renderPdf(url, name, isMobilePdf);
-    } else if (type?.startsWith('text/') || type?.includes('json')) {
+    } else if (type?.startsWith('text/') ||
+      type?.includes('json')) {
       node = await this.renderText(url, size);
     } else {
       node = this.renderCard(type, name, size);
@@ -1346,15 +1687,21 @@ const PreviewManager = {
         ((type?.startsWith('text/') || type?.includes('json')) &&
           size <= CONFIG.TEXT_PREVIEW_LIMIT));
 
-    node.classList.add(isDesk ? 'preview-item' : 'modal-preview-item');
+    node.classList.add(
+      isDesk ? 'preview-item' : 'modal-preview-item'
+    );
     node.classList.add(isFill ? 'layout-fill' : 'layout-fit');
     container.appendChild(node);
 
     const canCopy = type?.match(
       /text|image|json|javascript|typescript|xml|svg/
     );
-    UI.copyContentBtns.forEach(b => { if (b) b.disabled = !canCopy; });
-    UI.actionBtns.forEach(b => { if (b) b.disabled = false; });
+    UI.copyContentBtns.forEach(button => {
+      if (button) button.disabled = !canCopy;
+    });
+    UI.actionBtns.forEach(button => {
+      if (button) button.disabled = false;
+    });
   },
 
   renderAudio(url) {
@@ -1369,7 +1716,9 @@ const PreviewManager = {
 
   renderCard(type, name, size) {
     return this.createCard(
-      Utils.getIcon(type), name, Utils.formatSize(size)
+      Utils.getIcon(type),
+      name,
+      Utils.formatSize(size)
     );
   },
 
@@ -1389,33 +1738,15 @@ const PreviewManager = {
       link.innerHTML =
         'Open externally <i class="fas fa-external-link-alt"></i>';
       return this.createCard(
-        'fa-file-pdf', name, 'Preview unavailable', link
+        'fa-file-pdf',
+        name,
+        'Preview unavailable',
+        link
       );
     }
 
-    let displayUrl = url;
-    if (url.startsWith('data:')) {
-      console.log('Converting data URL to Blob for PDF.');
-      try {
-        const byteString = atob(url.split(',')[1]);
-        const ab = new ArrayBuffer(byteString.length);
-        const ia = new Uint8Array(ab);
-        for (let i = 0; i < byteString.length; i++) {
-          ia[i] = byteString.charCodeAt(i);
-        }
-        const blob = new Blob([ab], { type: 'application/pdf' });
-        displayUrl = URL.createObjectURL(blob);
-        this._tempPdfUrl = displayUrl;
-      } catch (e) {
-        console.error('PDF data URL conversion failed', e);
-        return this.createCard(
-          'fa-file-pdf', name, 'Error displaying PDF'
-        );
-      }
-    }
-
     const node = document.createElement('iframe');
-    node.src = displayUrl;
+    node.src = url;
     node.className = 'media-content media-frame';
     node.setAttribute('sandbox', 'allow-scripts allow-popups');
     return node;
@@ -1423,35 +1754,25 @@ const PreviewManager = {
 
   async renderText(url, size) {
     if (size > CONFIG.TEXT_PREVIEW_LIMIT) {
-      console.warn(`Text too large (${Utils.formatSize(size)}).`);
       return this.createCard('fa-file-alt', 'File too large');
     }
+
     const pre = document.createElement('pre');
     pre.className = 'text-preview';
+
     try {
-      if (url.startsWith('data:')) {
-        const b64 = url.split(',')[1];
-        const bin = atob(b64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) {
-          bytes[i] = bin.charCodeAt(i);
-        }
-        pre.textContent = new TextDecoder().decode(bytes);
-      } else {
-        const res = await fetch(url, {
-          signal: this.abortController.signal
-        });
-        if (!res.ok) throw new Error(`Status ${res.status}`);
-        pre.textContent = await res.text();
-      }
-    } catch (e) {
-      if (e.name === 'AbortError') {
-        console.log('Text preview fetch aborted.');
-      } else {
-        console.error('Error loading text preview:', e);
+      const res = await fetch(url, {
+        signal: this.abortController.signal
+      });
+      if (!res.ok) throw new Error(`Status ${res.status}`);
+      pre.textContent = await res.text();
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        console.error('Text preview failed:', error);
       }
       pre.textContent = 'Error loading preview.';
     }
+
     return pre;
   },
 
@@ -1485,9 +1806,12 @@ const PreviewManager = {
         this.unlockScreen();
       } else if (this.fullscreenMode === 'none' &&
         this.isMobileLayout()) {
-        const dev = this.getDeviceOrientation();
-        const vid = this.getVideoOrientation();
-        if (dev === 'landscape' && vid === 'landscape') {
+        const deviceOrientation = this.getDeviceOrientation();
+        const videoOrientation = this.getVideoOrientation();
+        if (
+          deviceOrientation === 'landscape' &&
+          videoOrientation === 'landscape'
+        ) {
           this.enterFullscreen('auto').catch(() => {});
         }
       }
@@ -1517,7 +1841,7 @@ const PreviewManager = {
     });
 
     node.addEventListener('error', () => {
-      console.error('Video element error:', node.error);
+      console.error('Video element failed:', node.error);
     });
 
     this.mediaElement = node;
@@ -1527,87 +1851,75 @@ const PreviewManager = {
   unlockScreen() {
     try {
       if (screen.orientation?.unlock) {
-        console.log('Unlocking screen orientation.');
         screen.orientation.unlock();
       }
-    } catch (e) {
-      console.warn('Screen unlock failed:', e);
+    } catch (error) {
+      console.warn('Screen orientation unlock failed:', error);
     }
   }
 };
 
 const MediaPreloader = {
   load(msg) {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       const type = msg.fileType || '';
       if (!type.startsWith('image/') &&
         !type.startsWith('video/')) {
-        return resolve(null);
+        resolve(null);
+        return;
       }
       if (!Utils.isWebSafe(type)) {
-        console.log(`Skipping unsafe preload: ${type}`);
-        return resolve(null);
+        resolve(null);
+        return;
       }
-      console.log(`Preloading: "${msg.name}"`);
 
       if (type.startsWith('video/')) {
-        const vid = document.createElement('video');
-        vid.muted = true;
-        vid.playsInline = true;
-        vid.preload = 'auto';
-        vid.className = 'embed-media';
-        vid.src = msg.content;
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = 'auto';
+        video.className = 'embed-media';
+        video.src = msg.content;
 
-        const finish = (result) => {
-          vid.onloadeddata = null;
-          vid.onerror = null;
-          clearTimeout(tm);
+        const finish = result => {
+          video.onloadeddata = null;
+          video.onerror = null;
+          clearTimeout(timer);
           resolve(result);
         };
 
-        const tm = setTimeout(() => {
-          console.warn(`Preload timeout: "${msg.name}"`);
+        const timer = setTimeout(() => {
+          console.warn('Media preload timed out.');
           finish(null);
         }, 5000);
-        vid.onloadeddata = () => {
-          console.log(`Video preloaded: "${msg.name}"`);
-          finish(vid);
-        };
-        vid.onerror = () => {
-          console.error(`Preload error: "${msg.name}"`);
+        video.onloadeddata = () => finish(video);
+        video.onerror = () => {
+          console.error('Media preload failed.');
           finish(null);
         };
         return;
       }
 
-      if (type.startsWith('image/')) {
-        const img = new Image();
-        img.className = 'embed-media';
-        img.src = msg.content;
+      const image = new Image();
+      image.className = 'embed-media';
+      image.src = msg.content;
 
-        const finish = (result) => {
-          img.onload = null;
-          img.onerror = null;
-          clearTimeout(tm);
-          resolve(result);
-        };
+      const finish = result => {
+        image.onload = null;
+        image.onerror = null;
+        clearTimeout(timer);
+        resolve(result);
+      };
 
-        const tm = setTimeout(() => {
-          console.warn(`Preload timeout: "${msg.name}"`);
-          finish(null);
-        }, 5000);
-        img.onload = () => {
-          console.log(`Image preloaded: "${msg.name}"`);
-          finish(img);
-        };
-        img.onerror = () => {
-          console.error(`Preload error: "${msg.name}"`);
-          finish(null);
-        };
-        return;
-      }
-
-      resolve(null);
+      const timer = setTimeout(() => {
+        console.warn('Media preload timed out.');
+        finish(null);
+      }, 5000);
+      image.onload = () => finish(image);
+      image.onerror = () => {
+        console.error('Media preload failed.');
+        finish(null);
+      };
     });
   }
 };
@@ -1621,9 +1933,11 @@ const MessageRenderer = {
 
   getCat(msg) {
     if (msg.type === 'text') return 'text';
-    const m = msg.fileType || '';
-    if ((m.startsWith('image/') || m.startsWith('video/')) &&
-      Utils.isWebSafe(m)) {
+    const mime = msg.fileType || '';
+    if (
+      (mime.startsWith('image/') || mime.startsWith('video/')) &&
+      Utils.isWebSafe(mime)
+    ) {
       return 'media';
     }
     return 'file';
@@ -1632,85 +1946,89 @@ const MessageRenderer = {
   prune() {
     const MAX_CNT = 1000;
     const MAX_MEM = 256 * 1024 * 1024;
-    const startCount = this.domCount;
-    const startSize = this.domSize;
+
     while (this.domCount > MAX_CNT || this.domSize > MAX_MEM) {
       const top = UI.messageList.firstElementChild;
       if (!top) break;
+
       if (top.classList.contains('message-group')) {
-        const b = top.querySelector('.bubble');
-        if (b) {
-          this.domSize -= parseInt(b.dataset.memSize || 0);
+        const bubble = top.querySelector('.bubble');
+        if (bubble) {
+          this.domSize -= parseInt(bubble.dataset.memSize || 0);
           this.domCount--;
-          b.remove();
+          bubble.remove();
         }
         if (!top.querySelector('.bubble')) top.remove();
       } else {
         top.remove();
       }
     }
-    if (this.domCount < startCount) {
-      console.log(
-        `Pruned DOM. Freed: ${Utils.formatSize(startSize - this.domSize)}.`
-      );
-    }
   },
 
   render(msg, preloadedNode = null) {
     const isMe = msg.senderId === socket.id;
     const time = msg.timestamp || Date.now();
-    const cat = this.getCat(msg);
+    const category = this.getCat(msg);
 
     if (!msg.isPending && msg.tempId) {
-      const p = document.getElementById(msg.tempId);
-      if (p) {
-        console.log(`Updating pending msg: ${msg.tempId}`);
-        p.classList.remove('pending');
-        p.removeAttribute('id');
-        if (msg.fileType) p.dataset.type = msg.fileType;
-        if (msg.size) p.dataset.size = msg.size;
-        if (msg.name) p.dataset.name = msg.name;
-        const s = p.querySelector('.file-size');
-        if (s) s.textContent = Utils.formatSize(msg.size);
+      const pending = document.getElementById(msg.tempId);
+      if (pending) {
+        pending.classList.remove('pending');
+        pending.removeAttribute('id');
+        if (msg.content) pending.dataset.content = msg.content;
+        if (msg.downloadUrl) {
+          pending.dataset.downloadUrl = msg.downloadUrl;
+        }
+        if (msg.fileType) pending.dataset.type = msg.fileType;
+        if (msg.size !== undefined) {
+          pending.dataset.size = msg.size;
+        }
+        if (msg.name) pending.dataset.name = msg.name;
+        const size = pending.querySelector('.file-size');
+        if (size) size.textContent = Utils.formatSize(msg.size);
         return;
       }
     }
 
     if (!msg.isPending && isMe &&
       document.getElementById(msg.tempId)) {
-      console.warn(`Duplicate render ${msg.tempId}. Ignoring.`);
       return;
     }
 
     const isNew = this.lastId !== msg.senderId ||
       time - this.lastTime > 60000 ||
-      this.lastCat !== cat;
+      this.lastCat !== category;
 
     if (isNew) {
-      const grp = document.createElement('div');
-      grp.className = `message-group ${isMe ? 'me' : 'them'}`;
+      const group = document.createElement('div');
+      group.className =
+        `message-group ${isMe ? 'me' : 'them'}`;
       const hue = msg.hue ?? 0;
-      grp.style.setProperty('--user-color', `hsl(${hue}, 50%, 50%)`);
+      group.style.setProperty(
+        '--user-color',
+        `hsl(${hue}, 50%, 50%)`
+      );
 
-      const ts = document.createElement('div');
-      ts.className = 'group-timestamp';
-      ts.textContent = Utils.formatTime(time);
-      grp.appendChild(ts);
-      UI.messageList.appendChild(grp);
+      const timestamp = document.createElement('div');
+      timestamp.className = 'group-timestamp';
+      timestamp.textContent = Utils.formatTime(time);
+      group.appendChild(timestamp);
+      UI.messageList.appendChild(group);
       this.lastId = msg.senderId;
       this.lastTime = time;
     }
 
-    const grp = UI.messageList.lastElementChild;
-    const b = document.createElement('div');
-    b.className = `bubble ${msg.isPending ? 'pending' : ''}`;
-    if (msg.tempId) b.id = msg.tempId;
+    const group = UI.messageList.lastElementChild;
+    const bubble = document.createElement('div');
+    bubble.className =
+      `bubble ${msg.isPending ? 'pending' : ''}`;
+    if (msg.tempId) bubble.id = msg.tempId;
 
     if (msg.type === 'text') {
-      const t = document.createElement('div');
-      t.className = 'bubble-text';
-      t.appendChild(Utils.linkify(msg.content));
-      b.appendChild(t);
+      const text = document.createElement('div');
+      text.className = 'bubble-text';
+      text.appendChild(Utils.linkify(msg.content));
+      bubble.appendChild(text);
 
       const actions = document.createElement('div');
       actions.className = 'bubble-actions';
@@ -1724,12 +2042,13 @@ const MessageRenderer = {
       let flashTimeout;
       let revertTimeout;
 
-      copyBtn.onclick = async (e) => {
+      copyBtn.onclick = async () => {
         if (!navigator.clipboard) {
-          console.error('Clipboard API not available');
+          console.error('Clipboard API unavailable.');
           Toast.show('Failed to copy', 'error');
           return;
         }
+
         try {
           await navigator.clipboard.writeText(msg.content);
           clearTimeout(revertTimeout);
@@ -1747,23 +2066,31 @@ const MessageRenderer = {
 
           if (window.matchMedia('(hover: none)').matches) {
             revertTimeout = setTimeout(() => {
-              b.classList.remove('show-actions');
-              const parentGrp = b.closest('.message-group');
-              if (parentGrp && !parentGrp.querySelector('.bubble.show-actions')) {
-                parentGrp.classList.remove('show-timestamp');
+              bubble.classList.remove('show-actions');
+              const parentGroup =
+                bubble.closest('.message-group');
+              if (
+                parentGroup &&
+                !parentGroup.querySelector(
+                  '.bubble.show-actions'
+                )
+              ) {
+                parentGroup.classList.remove('show-timestamp');
               }
             }, 2000);
           }
-        } catch (err) {
-          console.error('Clipboard write failed:', err);
+        } catch (error) {
+          console.error('Clipboard write failed:', error);
           Toast.show('Failed to copy', 'error');
         }
       };
 
-      actions.addEventListener('transitionend', (e) => {
-        if (e.propertyName === 'opacity') {
-          const currentOpacity = parseFloat(window.getComputedStyle(actions).opacity);
-          if (currentOpacity === 0 && isCopied) {
+      actions.addEventListener('transitionend', event => {
+        if (event.propertyName === 'opacity') {
+          const opacity = parseFloat(
+            window.getComputedStyle(actions).opacity
+          );
+          if (opacity === 0 && isCopied) {
             isCopied = false;
             copyBtn.innerHTML = '<i class="far fa-copy"></i>';
           }
@@ -1771,89 +2098,101 @@ const MessageRenderer = {
       });
 
       actions.appendChild(copyBtn);
-      b.appendChild(actions);
-
+      bubble.appendChild(actions);
     } else {
-      const m = msg.fileType || 'application/octet-stream';
-      const isEmb = (m.startsWith('image/') ||
-        m.startsWith('video/')) && Utils.isWebSafe(m);
-      const isAudio = m.startsWith('audio/');
+      const mime =
+        msg.fileType || 'application/octet-stream';
+      const isEmbed =
+        (mime.startsWith('image/') ||
+          mime.startsWith('video/')) &&
+        Utils.isWebSafe(mime);
+      const isAudio = mime.startsWith('audio/');
 
-      b.dataset.content = msg.content;
-      b.dataset.type = m;
-      b.dataset.name = msg.name;
-      b.dataset.size = msg.size;
+      bubble.dataset.content = msg.content;
+      bubble.dataset.downloadUrl =
+        msg.downloadUrl || msg.content;
+      bubble.dataset.type = mime;
+      bubble.dataset.name = msg.name;
+      bubble.dataset.size = msg.size;
 
       const open = () => {
         PreviewManager.open(
-          b.dataset.content,
-          b.dataset.type,
-          b.dataset.name,
-          parseInt(b.dataset.size)
+          bubble.dataset.content,
+          bubble.dataset.downloadUrl,
+          bubble.dataset.type,
+          bubble.dataset.name,
+          parseInt(bubble.dataset.size)
         );
       };
 
       if (isAudio) {
-        b.classList.add('file-bubble');
-        const player = AudioFactory.create(msg.content, msg.name);
-        b.appendChild(player);
-      } else if (isEmb) {
-        b.classList.add('embed-bubble');
-        const w = document.createElement('div');
-        w.className = 'bubble-embed-container';
-        w.onclick = open;
+        bubble.classList.add('file-bubble');
+        const player = AudioFactory.create(
+          msg.content,
+          msg.name
+        );
+        bubble.appendChild(player);
+      } else if (isEmbed) {
+        bubble.classList.add('embed-bubble');
+        const wrapper = document.createElement('div');
+        wrapper.className = 'bubble-embed-container';
+        wrapper.onclick = open;
 
         if (preloadedNode) {
           if (preloadedNode.tagName === 'VIDEO') {
-            const ratio = preloadedNode.videoWidth /
+            const ratio =
+              preloadedNode.videoWidth /
               preloadedNode.videoHeight;
             if (ratio && isFinite(ratio)) {
-              w.style.aspectRatio = String(ratio);
+              wrapper.style.aspectRatio = String(ratio);
             }
           } else if (preloadedNode.tagName === 'IMG') {
-            const ratio = preloadedNode.naturalWidth /
+            const ratio =
+              preloadedNode.naturalWidth /
               preloadedNode.naturalHeight;
             if (ratio && isFinite(ratio)) {
-              w.style.aspectRatio = String(ratio);
+              wrapper.style.aspectRatio = String(ratio);
             }
           }
-          w.appendChild(preloadedNode);
-          if (preloadedNode.tagName === 'VIDEO') {
-            const o = document.createElement('div');
-            o.className = 'play-icon-overlay';
-            o.innerHTML = '<i class="fas fa-play"></i>';
-            w.appendChild(o);
-          }
-        } else {
-          if (m.startsWith('video')) {
-            const med = document.createElement('video');
-            med.className = 'embed-media';
-            med.muted = true;
-            med.playsInline = true;
-            med.preload = 'metadata';
-            med.src = msg.content;
-            med.onloadeddata = () => { med.currentTime = 0.001; };
-            w.appendChild(med);
 
-            const o = document.createElement('div');
-            o.className = 'play-icon-overlay';
-            o.innerHTML = '<i class="fas fa-play"></i>';
-            w.appendChild(o);
-          } else {
-            const med = document.createElement('img');
-            med.className = 'embed-media';
-            med.src = msg.content;
-            w.appendChild(med);
+          wrapper.appendChild(preloadedNode);
+          if (preloadedNode.tagName === 'VIDEO') {
+            const overlay = document.createElement('div');
+            overlay.className = 'play-icon-overlay';
+            overlay.innerHTML = '<i class="fas fa-play"></i>';
+            wrapper.appendChild(overlay);
           }
+        } else if (mime.startsWith('video')) {
+          const media = document.createElement('video');
+          media.className = 'embed-media';
+          media.muted = true;
+          media.playsInline = true;
+          media.preload = 'metadata';
+          media.src = msg.content;
+          media.onloadeddata = () => {
+            media.currentTime = 0.001;
+          };
+          wrapper.appendChild(media);
+
+          const overlay = document.createElement('div');
+          overlay.className = 'play-icon-overlay';
+          overlay.innerHTML = '<i class="fas fa-play"></i>';
+          wrapper.appendChild(overlay);
+        } else {
+          const media = document.createElement('img');
+          media.className = 'embed-media';
+          media.src = msg.content;
+          wrapper.appendChild(media);
         }
-        b.appendChild(w);
+
+        bubble.appendChild(wrapper);
       } else {
-        b.classList.add('file-bubble');
-        const c = document.createElement('div');
-        c.className = 'file-card';
-        c.onclick = open;
-        const icon = Utils.getIcon(m);
-        c.innerHTML = `
+        bubble.classList.add('file-bubble');
+        const card = document.createElement('div');
+        card.className = 'file-card';
+        card.onclick = open;
+        const icon = Utils.getIcon(mime);
+        card.innerHTML = `
           <div class="file-icon-wrapper">
             <i class="fas ${icon}"></i>
           </div>
@@ -1861,29 +2200,28 @@ const MessageRenderer = {
             <span class="file-name"></span>
             <span class="file-size"></span>
           </div>`;
-        c.querySelector('.file-name').textContent = msg.name;
-        const sizeText = msg.isPending
-          ? 'Uploading...'
-          : Utils.formatSize(msg.size);
-        c.querySelector('.file-size').textContent = sizeText;
-        b.appendChild(c);
+        card.querySelector('.file-name').textContent = msg.name;
+        card.querySelector('.file-size').textContent =
+          msg.isPending
+            ? 'Uploading...'
+            : Utils.formatSize(msg.size);
+        bubble.appendChild(card);
       }
     }
 
-    const mem = (msg.content || '').length;
-    b.dataset.memSize = mem;
-    this.domSize += mem;
+    const memory = (msg.content || '').length;
+    bubble.dataset.memSize = memory;
+    this.domSize += memory;
     this.domCount++;
 
-    grp.insertBefore(b, grp.lastElementChild);
+    group.insertBefore(bubble, group.lastElementChild);
     this.prune();
 
-    this.lastCat = cat;
+    this.lastCat = category;
     this.scrollToBottom();
   },
 
   reset() {
-    console.log('Resetting renderer.');
     this.domCount = 0;
     this.domSize = 0;
     this.lastCat = null;
@@ -1905,7 +2243,6 @@ const MessageQueue = {
   queue: [],
 
   enqueue(msg) {
-    console.log(`Enqueue msg. Queue size: ${this.queue.length + 1}`);
     this.queue.push(msg);
     this.process();
   },
@@ -1918,8 +2255,8 @@ const MessageQueue = {
       const msg = this.queue[0];
 
       if (!msg.isPending && msg.tempId) {
-        const el = document.getElementById(msg.tempId);
-        if (el) {
+        const element = document.getElementById(msg.tempId);
+        if (element) {
           MessageRenderer.render(msg);
           this.queue.shift();
           continue;
@@ -1929,8 +2266,8 @@ const MessageQueue = {
       let node = null;
       try {
         node = await MediaPreloader.load(msg);
-      } catch (e) {
-        console.error('Media preloader failed:', e);
+      } catch (error) {
+        console.error('Media preload failed:', error);
       }
 
       MessageRenderer.render(msg, node);
@@ -1942,84 +2279,80 @@ const MessageQueue = {
 };
 
 const SocketManager = {
-  send(type, content, name, fileType, size) {
-    const tid = `t-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+  send(type, content, name, fileType, size, downloadUrl) {
+    const tempId =
+      `t-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const payload = {
-      type, content, name, fileType, size, tempId: tid, hue: myHue
+      type,
+      content,
+      name,
+      fileType,
+      size,
+      downloadUrl,
+      tempId
     };
-
-    let logContent;
-    if (type === 'text') {
-      logContent = content.length > 200
-        ? content.substring(0, 200) + '...'
-        : content;
-    } else if (type === 'file' && typeof content === 'string' &&
-      content.startsWith('data:')) {
-      logContent = `Data URL (${fileType}, ${Utils.formatSize(size)})`;
-    } else {
-      logContent = content;
-    }
-    console.log(`Send msg (${type}): "${logContent}"`);
 
     MessageQueue.enqueue({
       ...payload,
       senderId: socket.id,
       timestamp: Date.now(),
+      hue: myHue,
       isPending: true
     });
     socket.emit('message', payload);
   }
 };
 
-socket.on('session', (data) => {
+socket.on('session', data => {
   myHue = data.hue;
-  console.log('Session hue:', myHue);
-  UI.sendBtn.style.backgroundColor = `hsl(${myHue}, 50%, 50%)`;
+  UI.sendBtn.style.backgroundColor =
+    `hsl(${myHue}, 50%, 50%)`;
   UI.sendBtn.style.color = 'white';
 });
 
-socket.on('userCountUpdate', (c) => {
-  console.log('User count:', c);
-  UI.userCount.textContent = c;
+socket.on('userCountUpdate', count => {
+  UI.userCount.textContent = count;
 });
-socket.on('message', (m) => {
-  console.log('Received message:', m);
-  MessageQueue.enqueue(m);
+
+socket.on('message', message => {
+  MessageQueue.enqueue(message);
 });
-socket.on('error', (e) => {
-  console.error('Server error:', e);
-  Toast.show(e.message || e, 'error');
+
+socket.on('error', error => {
+  console.error('Server error:', error);
+  Toast.show(error.message || error, 'error');
 });
 
 PreviewManager.init();
 TouchDelegate.init();
 
 UI.input.addEventListener('focus', () => {
-  document.querySelectorAll('.bubble.show-actions').forEach(b => b.classList.remove('show-actions'));
-  document.querySelectorAll('.message-group.show-timestamp').forEach(g => g.classList.remove('show-timestamp'));
+  document.querySelectorAll('.bubble.show-actions').forEach(bubble => {
+    bubble.classList.remove('show-actions');
+  });
+  document.querySelectorAll(
+    '.message-group.show-timestamp'
+  ).forEach(group => {
+    group.classList.remove('show-timestamp');
+  });
 });
 
-UI.input.onkeydown = (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
+UI.input.onkeydown = event => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
     UI.sendBtn.click();
   }
 };
 
 UI.input.oninput = function() {
-  const oldHeight = this.style.height;
   this.style.height = 'auto';
-  const newHeight = Math.min(this.scrollHeight, 120);
-  this.style.height = newHeight + 'px';
-  if (oldHeight !== this.style.height) {
-    console.log(`Input resize: ${newHeight}px`);
-  }
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
 };
 
 UI.sendBtn.onclick = () => {
-  const t = UI.input.value.trim();
-  if (!t) return;
-  SocketManager.send('text', t);
+  const text = UI.input.value.trim();
+  if (!text) return;
+  SocketManager.send('text', text);
   UI.input.value = '';
   UI.input.style.height = 'auto';
   UI.input.focus();
@@ -2027,7 +2360,6 @@ UI.sendBtn.onclick = () => {
 
 UI.fileInput.onchange = function() {
   if (this.files.length) {
-    console.log(`File input: ${this.files.length} selected.`);
     UploadManager.add(Array.from(this.files));
   }
   this.value = '';
@@ -2046,15 +2378,15 @@ const ResetController = {
 
   init() {
     if (this.isMobile) {
-      this.btn.onclick = (e) => {
-        e.preventDefault();
+      this.btn.onclick = event => {
+        event.preventDefault();
         this.handleClick();
       };
     } else {
       this.container.onmouseenter = () => this.arm();
       this.container.onmouseleave = () => this.disarm();
       this.btn.onclick = () => {
-         if (this.isArmed()) this.execute();
+        if (this.isArmed()) this.execute();
       };
     }
   },
@@ -2097,11 +2429,10 @@ const ResetController = {
     await Animation.clearChat();
     MessageRenderer.reset();
 
-    const elapsed = Date.now() - start;
-    const remaining = minTime - elapsed;
+    const remaining = minTime - (Date.now() - start);
 
     if (remaining > 0) {
-      await new Promise(r => setTimeout(r, remaining));
+      await new Promise(resolve => setTimeout(resolve, remaining));
     }
 
     await this.waitForSpinLoop();
@@ -2115,13 +2446,25 @@ const ResetController = {
 
   waitForSpinLoop() {
     return new Promise(resolve => {
-      if (getComputedStyle(this.icon).animationName === 'none') return resolve();
+      if (
+        getComputedStyle(this.icon).animationName === 'none'
+      ) {
+        resolve();
+        return;
+      }
 
       const handler = () => {
-        this.icon.removeEventListener('animationiteration', handler);
+        this.icon.removeEventListener(
+          'animationiteration',
+          handler
+        );
         resolve();
       };
-      this.icon.addEventListener('animationiteration', handler, { once: true });
+      this.icon.addEventListener(
+        'animationiteration',
+        handler,
+        { once: true }
+      );
     });
   }
 };
@@ -2129,63 +2472,75 @@ const ResetController = {
 ResetController.init();
 
 let dragCounter = 0;
-const isFiles = (e) => e.dataTransfer.types.includes('Files');
+const isFiles = event =>
+  event.dataTransfer.types.includes('Files');
 
-window.ondragenter = (e) => {
-  if (isFiles(e)) {
-    e.preventDefault();
+window.ondragenter = event => {
+  if (isFiles(event)) {
+    event.preventDefault();
     dragCounter++;
     UI.dropOverlay.classList.add('active');
   }
 };
-window.ondragleave = (e) => {
-  if (isFiles(e)) {
-    e.preventDefault();
+
+window.ondragleave = event => {
+  if (isFiles(event)) {
+    event.preventDefault();
     dragCounter--;
     if (dragCounter === 0) {
       UI.dropOverlay.classList.remove('active');
     }
   }
 };
-window.ondragover = (e) => {
-  if (isFiles(e)) e.preventDefault();
+
+window.ondragover = event => {
+  if (isFiles(event)) event.preventDefault();
 };
-window.ondrop = (e) => {
-  if (isFiles(e)) {
-    e.preventDefault();
+
+window.ondrop = event => {
+  if (isFiles(event)) {
+    event.preventDefault();
     dragCounter = 0;
     UI.dropOverlay.classList.remove('active');
-    if (e.dataTransfer.files.length) {
-      console.log(`Dropped ${e.dataTransfer.files.length} files.`);
-      UploadManager.add(Array.from(e.dataTransfer.files));
+    if (event.dataTransfer.files.length) {
+      UploadManager.add(
+        Array.from(event.dataTransfer.files)
+      );
     }
   }
 };
-window.onpaste = (e) => {
-  const items = Array.from(e.clipboardData.items);
-  const files = items.filter(i => i.kind === 'file')
-    .map(i => i.getAsFile());
-  if (files.length) {
-    console.log(`Pasted ${files.length} files.`);
-    UploadManager.add(files);
-  }
+
+window.onpaste = event => {
+  const items = Array.from(event.clipboardData.items);
+  const files = items
+    .filter(item => item.kind === 'file')
+    .map(item => item.getAsFile())
+    .filter(Boolean);
+
+  if (files.length) UploadManager.add(files);
 };
 
 if (UI.resizer) {
   let drag = false;
+
   UI.resizer.onmousedown = () => {
     drag = true;
     UI.resizer.classList.add('dragging');
     document.body.style.cursor = 'col-resize';
   };
-  document.onmousemove = (e) => {
+
+  document.onmousemove = event => {
     const min = 320;
     const max = innerWidth - min;
-    if (drag && e.clientX >= min && e.clientX <= max) {
+    if (drag && event.clientX >= min && event.clientX <= max) {
       document.querySelector('.app-layout')
-        .style.setProperty('--left-pane-width', `${e.clientX}px`);
+        .style.setProperty(
+          '--left-pane-width',
+          `${event.clientX}px`
+        );
     }
   };
+
   document.onmouseup = () => {
     if (drag) {
       drag = false;
@@ -2194,6 +2549,6 @@ if (UI.resizer) {
     }
   };
 }
-console.log('App initialized.');
+
 document.body.style.opacity = '1';
 UI.input.focus();
